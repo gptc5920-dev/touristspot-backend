@@ -1,0 +1,11 @@
+.env
+.env.local
+.env.production
+*.log
+coverage/
+node_modules/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+db.sqlite3
