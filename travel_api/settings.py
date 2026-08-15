@@ -67,6 +67,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -80,7 +81,9 @@ ROOT_URLCONF = 'travel_api.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        # The production Docker image builds the React application into this
+        # directory. Django then serves the SPA shell for client-side routes.
+        'DIRS': [BASE_DIR.parent / 'frontend' / 'dist'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -100,10 +103,33 @@ WSGI_APPLICATION = 'travel_api.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': (
+            'travel_api.db.backends.legacy_mysql'
+            if env_bool('MYSQL_ALLOW_LEGACY_MARIADB')
+            else 'django.db.backends.mysql'
+        ),
+        'NAME': os.getenv('MYSQL_DATABASE', 'tourist'),
+        'USER': os.getenv('MYSQL_USER', 'root'),
+        'PASSWORD': os.getenv('MYSQL_PASSWORD', ''),
+        'HOST': os.getenv('MYSQL_HOST', '127.0.0.1'),
+        'PORT': os.getenv('MYSQL_PORT', '3306'),
+        'CONN_MAX_AGE': int(os.getenv('MYSQL_CONN_MAX_AGE', '60' if APP_ENV != 'development' else '0')),
+        'CONN_HEALTH_CHECKS': APP_ENV != 'development',
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
+
+# Opt-in, read-only source alias for a one-time SQLite-to-MySQL data export.
+# The application always uses MySQL through the default database connection.
+legacy_sqlite_path = os.getenv('SQLITE_MIGRATION_PATH')
+if legacy_sqlite_path:
+    DATABASES['sqlite_legacy'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': legacy_sqlite_path,
+    }
 
 
 # Password validation
@@ -140,18 +166,53 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+FRONTEND_DIST_DIR = BASE_DIR.parent / 'frontend' / 'dist'
+STATICFILES_DIRS = [FRONTEND_DIST_DIR] if FRONTEND_DIST_DIR.is_dir() else []
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# WhiteNoise makes Django assets self-contained for the application container;
+# Nginx serves those files, and user uploads, directly in production.
+if not DEBUG:
+    STORAGES = {
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+
+# Authentication and transactional email
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+REMEMBER_ME_SECONDS = int(os.getenv('REMEMBER_ME_SECONDS', str(14 * 24 * 60 * 60)))
+PASSWORD_RESET_TIMEOUT = int(os.getenv('PASSWORD_RESET_TIMEOUT', '3600'))
+
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend'
+    if DEBUG else 'django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = env_bool('EMAIL_USE_TLS', True)
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'Travel Osmena <no-reply@localhost>')
 
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_FAILURE_VIEW = 'travel_api.views.csrf_failure'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', not DEBUG)
 SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000' if not DEBUG else '0'))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG and SECURE_HSTS_SECONDS > 0
-SECURE_HSTS_PRELOAD = False
+# Preloading is opt-in: it commits every subdomain to HTTPS once the domain is
+# submitted to the browser preload list, so leave it disabled unless intended.
+SECURE_HSTS_PRELOAD = env_bool('SECURE_HSTS_PRELOAD', False)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 LOGGING = {
     'version': 1,

@@ -1,11 +1,14 @@
 import json
+import re
 import tempfile
 from datetime import time
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 from .models import Destination, DestinationReview, SavedItinerary, SiteSettings, TouristProfile
 
@@ -208,7 +211,88 @@ class ItineraryApiTests(TestCase):
         self.assertEqual(response.json()['user']['role'], 'admin')
         self.assertEqual(response.json()['user']['username'], 'admin-user')
         self.assertEqual(response.json()['user']['email'], 'admin@example.com')
+        self.assertTrue(client.session.get_expire_at_browser_close())
         self.assertEqual(client.get('/api/admin/dashboard/').status_code, 200)
+
+    @override_settings(REMEMBER_ME_SECONDS=1209600)
+    def test_remember_me_controls_session_persistence(self):
+        get_user_model().objects.create_user(
+            username='remembered-user', email='remembered@example.com', password='secure-pass',
+        )
+        remembered_client = Client()
+        response = remembered_client.post('/api/auth/login/', data=json.dumps({
+            'identifier': 'remembered-user', 'password': 'secure-pass', 'remember_me': True,
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(remembered_client.session.get_expire_at_browser_close())
+        self.assertGreaterEqual(remembered_client.session.get_expiry_age(), 1209590)
+
+        browser_client = Client()
+        response = browser_client.post('/api/auth/login/', data=json.dumps({
+            'identifier': 'remembered-user', 'password': 'secure-pass', 'remember_me': False,
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(browser_client.session.get_expire_at_browser_close())
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        FRONTEND_URL='http://frontend.test',
+    )
+    def test_password_reset_request_is_private_and_token_is_one_time(self):
+        user = get_user_model().objects.create_user(
+            username='reset-user', email='reset@example.com', password='Old-secure-pass-2026!',
+        )
+        response = self.client.post('/api/auth/password-reset/', data=json.dumps({
+            'email': 'reset@example.com',
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        reset_url = re.search(r'https?://\S+', mail.outbox[0].body).group(0)
+        parsed_url = urlparse(reset_url)
+        parameters = parse_qs(parsed_url.query)
+        self.assertEqual(parsed_url.path, '/reset-password/')
+
+        unknown_response = self.client.post('/api/auth/password-reset/', data=json.dumps({
+            'email': 'unknown@example.com',
+        }), content_type='application/json')
+        self.assertEqual(unknown_response.status_code, 200)
+        self.assertEqual(unknown_response.json(), response.json())
+        self.assertEqual(len(mail.outbox), 1)
+
+        reset_payload = {
+            'uid': parameters['uid'][0],
+            'token': parameters['token'][0],
+            'password': 'New-secure-pass-2026!',
+            'password_confirm': 'New-secure-pass-2026!',
+        }
+        confirm_response = self.client.post(
+            '/api/auth/password-reset/confirm/',
+            data=json.dumps(reset_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(confirm_response.status_code, 200, confirm_response.content)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('New-secure-pass-2026!'))
+
+        reused_response = self.client.post(
+            '/api/auth/password-reset/confirm/',
+            data=json.dumps(reset_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(reused_response.status_code, 400)
+
+    def test_password_reset_rejects_invalid_email_and_token(self):
+        email_response = self.client.post('/api/auth/password-reset/', data=json.dumps({
+            'email': 'not-an-email',
+        }), content_type='application/json')
+        self.assertEqual(email_response.status_code, 400)
+
+        token_response = self.client.post('/api/auth/password-reset/confirm/', data=json.dumps({
+            'uid': 'invalid', 'token': 'invalid',
+            'password': 'New-secure-pass-2026!',
+            'password_confirm': 'New-secure-pass-2026!',
+        }), content_type='application/json')
+        self.assertEqual(token_response.status_code, 400)
 
     def test_tourist_can_sign_up_and_receives_a_profile(self):
         response = self.client.post('/api/auth/signup/', data=json.dumps({

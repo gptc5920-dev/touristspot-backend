@@ -17,7 +17,8 @@ Including another URLconf
 from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.generic import TemplateView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,3 +27,15 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# The Vite frontend uses the browser History API. Serving its index document
+# here keeps deep links such as /planner/ and /admin-dashboard/ working after a
+# refresh, while API, admin, static, and upload paths remain server-owned.
+if (settings.BASE_DIR.parent / 'frontend' / 'dist' / 'index.html').is_file():
+    urlpatterns += [
+        re_path(
+            r'^(?!api(?:/|$)|admin(?:/|$)|static(?:/|$)|media(?:/|$)).*$',
+            TemplateView.as_view(template_name='index.html'),
+            name='frontend-app',
+        ),
+    ]

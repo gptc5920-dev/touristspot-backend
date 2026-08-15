@@ -4,14 +4,20 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout, password_validation
+from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db.models import Avg, Count, Q
 from django.core.exceptions import ValidationError
 from django.db import connection, transaction
 from django.http import JsonResponse
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
 from django.utils.html import strip_tags
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
@@ -800,6 +806,7 @@ def login_view(request):
     if user is None:
         return JsonResponse({'error': 'Invalid username/email or password.'}, status=401)
     login(request, user)
+    request.session.set_expiry(settings.REMEMBER_ME_SECONDS if data.get('remember_me') is True else 0)
     return JsonResponse({'user': user_payload(user)})
 
 
@@ -807,6 +814,84 @@ def login_view(request):
 def logout_view(request):
     logout(request)
     return JsonResponse({'user': user_payload(request.user)})
+
+
+@require_POST
+def password_reset_request(request):
+    data = read_body(request)
+    if not isinstance(data, dict):
+        return JsonResponse({'error': 'Provide a valid email address.'}, status=400)
+
+    email = str(data.get('email') or '').strip().lower()
+    try:
+        validate_email(email)
+    except ValidationError:
+        return JsonResponse({'error': 'Enter a valid email address.'}, status=400)
+
+    User = get_user_model()
+    eligible_users = User.objects.filter(email__iexact=email, is_active=True).exclude(email='')
+    for user in eligible_users:
+        if not user.has_usable_password():
+            continue
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        reset_url = f'{settings.FRONTEND_URL}/reset-password/?uid={uid}&token={token}'
+        try:
+            send_mail(
+                subject='Reset your Travel Osmena password',
+                message=(
+                    f'Hello {user.first_name or user.get_username()},\n\n'
+                    'Use the link below to choose a new password:\n'
+                    f'{reset_url}\n\n'
+                    'If you did not request this, you can safely ignore this email. '
+                    'The link will expire automatically.'
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception:
+            # Keep the public response identical so mail delivery errors cannot reveal
+            # whether an account is registered with this address.
+            logger.exception('Password reset email delivery failed.')
+
+    return JsonResponse({
+        'message': 'If an active account uses that email, a password reset link has been sent.',
+    })
+
+
+@sensitive_post_parameters('password', 'password_confirm')
+@require_POST
+def password_reset_confirm(request):
+    data = read_body(request)
+    if not isinstance(data, dict):
+        return JsonResponse({'error': 'Provide a valid password reset request.'}, status=400)
+
+    uid = str(data.get('uid') or '')
+    token = str(data.get('token') or '')
+    password = data.get('password') or ''
+    password_confirm = data.get('password_confirm') or ''
+    if password != password_confirm:
+        return JsonResponse({'error': 'Passwords do not match.'}, status=400)
+
+    User = get_user_model()
+    try:
+        user_id = force_str(urlsafe_base64_decode(uid))
+        user = User.objects.get(pk=user_id)
+    except (TypeError, ValueError, OverflowError, UnicodeDecodeError, User.DoesNotExist):
+        user = None
+
+    if user is None or not user.is_active or not default_token_generator.check_token(user, token):
+        return JsonResponse({'error': 'This password reset link is invalid or has expired.'}, status=400)
+
+    try:
+        password_validation.validate_password(password, user)
+    except ValidationError as error:
+        return JsonResponse({'error': 'Choose a stronger password.', 'errors': {'password': error.messages}}, status=400)
+
+    user.set_password(password)
+    user.save(update_fields=['password'])
+    return JsonResponse({'message': 'Your password has been reset. You can now sign in.'})
 
 
 @require_http_methods(['GET', 'PATCH'])
