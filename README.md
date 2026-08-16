@@ -8,6 +8,46 @@ From the repository root, copy `back-end/.env.example` to `back-end/.env` and se
 
 The frontend uses `VITE_API_URL`, which defaults to the Django API proxy at `/api`. To override it, copy `frontend/.env.example` to `frontend/.env`; keep frontend variables separate because Vite exposes `VITE_*` values to browser code.
 
+## Nixpacks deployment
+
+Deploy this `back-end` repository as its own Nixpacks application. The tracked
+`nixpacks.toml` selects Python 3.13, installs the native MySQL build tooling, and
+runs `deploy/start.sh`. Startup waits briefly for MySQL, applies migrations,
+collects Django static files, and binds Gunicorn to the platform-provided
+`PORT` on all interfaces.
+
+Nixpacks builds the application image; it does not create the database. Attach
+a supported MySQL service and configure these production variables in the
+hosting dashboard:
+
+```dotenv
+APP_ENV=production
+APP_DEBUG=false
+DJANGO_SECRET_KEY=replace-with-a-long-random-secret
+ALLOWED_HOSTS=api.touristspot.site
+CSRF_TRUSTED_ORIGINS=https://touristspot.site
+CORS_ALLOWED_ORIGINS=https://touristspot.site
+CORS_ALLOW_CREDENTIALS=true
+CSRF_COOKIE_DOMAIN=.touristspot.site
+FRONTEND_URL=https://touristspot.site
+MYSQL_DATABASE=tourist
+MYSQL_USER=travel_app
+MYSQL_PASSWORD=replace-with-the-database-password
+MYSQL_HOST=replace-with-the-database-host
+MYSQL_PORT=3306
+MYSQL_ALLOW_LEGACY_MARIADB=false
+SECURE_SSL_REDIRECT=true
+SECURE_HSTS_SECONDS=31536000
+```
+
+Do not set a fixed production `PORT`; the hosting platform should inject it.
+After deployment, `https://api.touristspot.site/` should return the API service
+summary and `/api/health/` should report both the service and database as
+healthy. Configure the frontend build with
+`VITE_API_URL=https://api.touristspot.site/api`. User-uploaded media requires a
+persistent volume mounted at the application's `media/` directory, or an
+external object-storage backend.
+
 XAMPP's bundled MariaDB 10.4 is below Django 5.2's officially supported
 minimum. Local XAMPP development can opt into the project's narrow version-gate
 adapter with `MYSQL_ALLOW_LEGACY_MARIADB=true`. Keep this disabled for MySQL 8,

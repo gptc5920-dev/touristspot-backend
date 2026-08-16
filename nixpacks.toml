@@ -1,0 +1,12 @@
+providers = ["python"]
+
+[variables]
+PORT = "8000"
+
+[phases.setup]
+# Nixpacks detects mysqlclient and adds libmysqlclient.dev. mysqlclient's build
+# also calls pkg-config to locate those headers and libraries.
+nixPkgs = ["...", "pkg-config"]
+
+[start]
+cmd = "sh deploy/start.sh"

@@ -20,6 +20,8 @@ from django.conf.urls.static import static
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
+from . import views
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('itineraries.urls')),
@@ -39,3 +41,7 @@ if (settings.BASE_DIR.parent / 'frontend' / 'dist' / 'index.html').is_file():
             name='frontend-app',
         ),
     ]
+else:
+    # Backend-only deployments (including the Nixpacks service) should expose a
+    # successful root response instead of relying on a separate frontend build.
+    urlpatterns += [path('', views.api_root, name='api-root')]

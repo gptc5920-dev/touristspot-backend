@@ -3,3 +3,4 @@ python-dotenv==1.0.0
 mysqlclient==2.2.8
 gunicorn==23.0.0
 whitenoise==6.8.2
+django-cors-headers==4.9.0
