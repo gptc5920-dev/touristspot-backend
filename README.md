@@ -45,7 +45,8 @@ SECURE_HSTS_SECONDS=31536000
 Do not set a fixed production `PORT`; the hosting platform should inject it.
 After deployment, `https://api.touristspot.site/` should return the API service
 summary and `/api/health/` should report both the service and database as
-healthy. Configure the frontend build with
+healthy. Interactive Swagger documentation is available at `/api/docs/`, and
+the OpenAPI 3.1 JSON document is available at `/api/schema/`. Configure the frontend build with
 `VITE_API_URL=https://api.touristspot.site/api`. User-uploaded media requires a
 persistent volume mounted at the application's `media/` directory, or an
 external object-storage backend.
@@ -119,6 +120,8 @@ Sign in with the staff account's unique username (recommended) or email, open `/
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET /api/docs/` | Interactive Swagger UI API viewer |
+| `GET /api/schema/` | Machine-readable OpenAPI 3.1 schema |
 | `GET /api/health/` | Safe service health summary |
 | `GET /api/destinations/` | Active, verified destinations |
 | `POST /api/itineraries/generate/` | Validated deterministic itinerary generation |

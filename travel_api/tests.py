@@ -1,6 +1,8 @@
 from django.db import connection
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
+from itineraries.urls import urlpatterns as itinerary_urlpatterns
+
 from .views import api_root
 
 
@@ -27,6 +29,50 @@ class ApiRootTests(SimpleTestCase):
         response = api_root(self.request_factory.head('/'))
 
         self.assertEqual(response.status_code, 200)
+
+
+class ApiDocumentationTests(SimpleTestCase):
+    @override_settings(
+        ALLOWED_HOSTS=['api.touristspot.site'],
+        SECURE_SSL_REDIRECT=False,
+    )
+    def test_openapi_schema_lists_the_existing_api(self):
+        response = self.client.get(
+            '/api/schema/',
+            secure=True,
+            HTTP_HOST='api.touristspot.site',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Content-Type'], 'application/json')
+        schema = response.json()
+        self.assertEqual(schema['openapi'], '3.1.0')
+        self.assertEqual(schema['servers'][0]['url'], 'https://api.touristspot.site')
+        self.assertIn('/api/health/', schema['paths'])
+        self.assertIn('/api/auth/login/', schema['paths'])
+        self.assertIn('/api/admin/destinations/{destination_id}/', schema['paths'])
+        self.assertIn('sessionCookie', schema['components']['securitySchemes'])
+        self.assertIn('csrfHeader', schema['components']['securitySchemes'])
+        application_paths = {
+            f"/api/{str(pattern.pattern).replace('<int:destination_id>', '{destination_id}')}"
+            for pattern in itinerary_urlpatterns
+        }
+        self.assertTrue(application_paths.issubset(schema['paths']))
+        operation_ids = [
+            operation['operationId']
+            for path_item in schema['paths'].values()
+            for operation in path_item.values()
+        ]
+        self.assertEqual(len(operation_ids), len(set(operation_ids)))
+
+    def test_swagger_ui_loads_the_local_schema(self):
+        response = self.client.get('/api/docs/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'SwaggerUIBundle')
+        self.assertContains(response, '/api/schema/')
+        self.assertEqual(response.headers['X-Robots-Tag'], 'noindex, nofollow')
+        self.assertIn("connect-src 'self'", response.headers['Content-Security-Policy'])
 
 
 class CorsConfigurationTests(SimpleTestCase):

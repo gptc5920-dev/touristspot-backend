@@ -1,7 +1,10 @@
 import logging
 
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
 from django.views.decorators.http import require_safe
+
+from .openapi import build_openapi_schema, swagger_ui_html
 
 
 logger = logging.getLogger('itineraries')
@@ -14,6 +17,29 @@ def api_root(request):
         'status': 'online',
         'health': '/api/health/',
     })
+
+
+@require_safe
+def openapi_schema(request):
+    server_url = request.build_absolute_uri('/').rstrip('/')
+    return JsonResponse(build_openapi_schema(server_url))
+
+
+@require_safe
+def api_docs(request):
+    response = HttpResponse(
+        swagger_ui_html(reverse('api-schema')),
+        content_type='text/html; charset=utf-8',
+    )
+    response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'none'; "
+        "connect-src 'self'; "
+        "img-src 'self' data: https:; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com"
+    )
+    return response
 
 
 def csrf_failure(request, reason=''):

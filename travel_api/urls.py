@@ -24,6 +24,8 @@ from . import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/schema/', views.openapi_schema, name='api-schema'),
+    path('api/docs/', views.api_docs, name='api-docs'),
     path('api/', include('itineraries.urls')),
 ]
 
