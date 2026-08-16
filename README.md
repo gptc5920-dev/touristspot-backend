@@ -11,8 +11,10 @@ The frontend uses `VITE_API_URL`, which defaults to the Django API proxy at `/ap
 ## Nixpacks deployment
 
 Deploy this `back-end` repository as its own Nixpacks application. The tracked
-`nixpacks.toml` selects Python 3.13, installs the native MySQL build tooling, and
-runs `deploy/start.sh`. Startup waits briefly for MySQL, applies migrations,
+`nixpacks.toml` selects Python 3.13 and runs `deploy/start.sh`. The application
+uses the pure-Python PyMySQL driver to connect to the attached MySQL service, so
+the image does not compile or bundle native MySQL client libraries. Startup
+waits briefly for MySQL, applies migrations,
 collects Django static files, and binds Gunicorn to the platform-provided
 `PORT` on all interfaces.
 

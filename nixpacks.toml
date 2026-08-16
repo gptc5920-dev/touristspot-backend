@@ -4,9 +4,9 @@ providers = ["python"]
 PORT = "8000"
 
 [phases.setup]
-# Nixpacks adds Python and GCC through Nix. Ubuntu's MySQL development package
-# exposes pkg-config metadata on the standard system path used by mysqlclient.
-aptPkgs = ["...", "default-libmysqlclient-dev", "pkg-config"]
+# The application uses the pure-Python PyMySQL driver, so the image only needs
+# Python and does not need native MySQL headers, pkg-config, or a compiler.
+nixPkgs = ["python313"]
 
 [start]
 cmd = "sh deploy/start.sh"

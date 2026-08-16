@@ -1,6 +1,12 @@
+from django.db import connection
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from .views import api_root
+
+
+class DatabaseDriverTests(SimpleTestCase):
+    def test_mysql_backend_uses_pymysql(self):
+        self.assertEqual(connection.Database.__name__, 'pymysql')
 
 
 class ApiRootTests(SimpleTestCase):
