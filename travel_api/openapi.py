@@ -22,6 +22,7 @@ def _endpoint(
     response_schema=None,
     success_status='200',
     security=None,
+    parameters=None,
 ):
     return {
         'path': path,
@@ -35,10 +36,27 @@ def _endpoint(
         'response_schema': response_schema,
         'success_status': success_status,
         'security': security,
+        'parameters': parameters,
     }
 
 
 ENDPOINTS = [
+    *[
+        _endpoint(
+            f'/api/locations/{level}/', 'get', f'location{level.title()}', 'Locations', summary,
+            response_schema='LocationList',
+            description='Public PSGC Cloud v2 lookup, cached for 24 hours. Codes are 10-digit strings. Municipalities includes cities.',
+            parameters=[{'name': 'q', 'in': 'query', 'schema': {'type': 'string'}, 'description': 'Case-insensitive name search.'}]
+            + ([{'name': parent, 'in': 'query', 'required': level == 'barangays',
+                 'schema': {'type': 'string', 'pattern': '^[0-9]{10}$'},
+                 'description': 'Parent PSGC code returned by the preceding lookup.'}] if parent else []),
+        )
+        for level, parent, summary in [
+            ('provinces', None, 'List Philippine provinces'),
+            ('municipalities', 'province_code', 'List cities and municipalities, optionally by province'),
+            ('barangays', 'municipality_code', 'List barangays of a city or municipality'),
+        ]
+    ],
     _endpoint('/', 'get', 'apiRoot', 'System', 'API service summary', response_schema='ApiRoot'),
     _endpoint('/api/schema/', 'get', 'openApiSchema', 'System', 'OpenAPI schema'),
     _endpoint('/api/docs/', 'get', 'swaggerUi', 'System', 'Interactive API documentation'),
@@ -134,6 +152,18 @@ ENDPOINTS = [
 
 
 SCHEMAS = {
+    'LocationList': {
+        'type': 'object',
+        'required': ['data', 'count', 'source'],
+        'properties': {
+            'data': {'type': 'array', 'items': {
+                'type': 'object', 'required': ['code', 'name'], 'additionalProperties': True,
+                'properties': {'code': {'type': 'string', 'pattern': '^[0-9]{10}$'}, 'name': {'type': 'string'}},
+            }},
+            'count': {'type': 'integer', 'minimum': 0},
+            'source': {'type': 'string', 'format': 'uri'},
+        },
+    },
     'GenericObject': GENERIC_OBJECT,
     'Error': {
         'type': 'object',
@@ -229,6 +259,9 @@ SCHEMAS = {
             'category': {'type': 'string'},
             'interests': {'type': 'array', 'items': {'type': 'string'}},
             'address': {'type': 'string'},
+            'province_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
+            'municipality_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
+            'barangay_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
             'coordinates': {'type': 'array', 'prefixItems': [{'type': 'number'}, {'type': 'number'}], 'minItems': 2, 'maxItems': 2},
             'opening_time': {'type': 'string', 'format': 'time'},
             'closing_time': {'type': 'string', 'format': 'time'},
@@ -258,6 +291,9 @@ SCHEMAS = {
             'interests': {'type': 'array', 'items': {'type': 'string'}},
             'area': {'type': 'string'},
             'address': {'type': 'string'},
+            'province_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
+            'municipality_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
+            'barangay_code': {'type': 'string', 'pattern': '^[0-9]{10}$'},
             'latitude': {'type': 'number', 'minimum': -90, 'maximum': 90},
             'longitude': {'type': 'number', 'minimum': -180, 'maximum': 180},
             'opening_time': {'type': 'string', 'format': 'time'},
@@ -331,6 +367,11 @@ def build_openapi_schema(server_url):
         }
         if endpoint['description']:
             operation['description'] = endpoint['description']
+        if endpoint['parameters']:
+            operation['parameters'] = endpoint['parameters']
+        if endpoint['tag'] == 'Locations':
+            for status, description in [('400', 'Invalid or missing parent code.'), ('404', 'Parent location not found.'), ('503', 'Location provider temporarily unavailable.')]:
+                operation['responses'][status] = _json_response(description, _schema_reference('Error'))
         if endpoint['request_schema']:
             operation['requestBody'] = {
                 'required': True,
@@ -386,6 +427,7 @@ def build_openapi_schema(server_url):
         'tags': [
             {'name': 'System'},
             {'name': 'Public'},
+            {'name': 'Locations'},
             {'name': 'Authentication'},
             {'name': 'Tourist'},
             {'name': 'Destinations'},

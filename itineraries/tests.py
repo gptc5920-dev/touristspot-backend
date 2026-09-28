@@ -559,6 +559,28 @@ class ItineraryApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('error', response.json())
 
+    def test_admin_destination_codes_round_trip_and_duplicate_is_rejected(self):
+        User = get_user_model()
+        staff = User.objects.create_user(username='location-admin', password='secure-pass', is_staff=True)
+        self.client.force_login(staff)
+        payload = {
+            'name': 'Test Falls', 'description': 'A second verified nature stop.', 'category': 'Nature',
+            'interests': ['nature'], 'area': 'Test Area', 'address': 'Other address',
+            'latitude': '9.700000', 'longitude': '123.400000', 'opening_time': '08:00', 'closing_time': '17:00',
+            'operating_days': ['Thursday'], 'visit_minutes': 90, 'entrance_fee': 50,
+            'province_code': '0907200000', 'municipality_code': '0907120000',
+            'barangay_code': '0907120001',
+        }
+        response = self.client.post('/api/admin/destinations/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['destination']['province_code'], '0907200000')
+        self.assertEqual(response.json()['destination']['barangay_code'], '0907120001')
+        payload['name'] = '  test falls  '
+        response = self.client.post('/api/admin/destinations/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('name', response.json()['fields'])
+        self.assertEqual(Destination.objects.count(), 2)
+
     def test_staff_can_upload_and_remove_destination_cover_image(self):
         User = get_user_model()
         staff = User.objects.create_user(username='media-admin', password='secure-pass', is_staff=True)

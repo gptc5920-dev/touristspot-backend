@@ -124,12 +124,17 @@ Sign in with the staff account's unique username (recommended) or email, open `/
 | `GET /api/schema/` | Machine-readable OpenAPI 3.1 schema |
 | `GET /api/health/` | Safe service health summary |
 | `GET /api/destinations/` | Active, verified destinations |
+| `GET /api/locations/provinces/?q=...` | Philippine provinces, optionally filtered by name |
+| `GET /api/locations/municipalities/?province_code=...` | Cities and municipalities in a province; parent filter is optional |
+| `GET /api/locations/barangays/?municipality_code=...` | Barangays in a city or municipality; parent code is required |
 | `POST /api/itineraries/generate/` | Validated deterministic itinerary generation |
 | `GET/POST /api/itineraries/` | Authenticated user's saved itineraries |
 | `POST /api/auth/login/` | CSRF-protected session sign-in |
 | `POST /api/auth/password-reset/` | Request a password reset email |
 | `POST /api/auth/password-reset/confirm/` | Set a password using a one-time reset token |
 | `GET/POST/PATCH /api/admin/...` | Staff-only destination administration |
+
+Location responses contain `data`, `count`, and `source`. PSGC codes are 10-digit strings. The public lookups use [PSGC Cloud v2](https://psgc.cloud/api-docs/v2) and cache each list for 24 hours; the admin form also permits a manual address when the provider is unavailable. Destinations store selected location codes alongside their display address, so existing records remain valid.
 
 ## Known limitations
 

@@ -5,6 +5,7 @@ from django.db import models
 from django.utils import timezone
 from decimal import Decimal, InvalidOperation
 from datetime import time
+import re
 
 
 class Destination(models.Model):
@@ -39,6 +40,9 @@ class Destination(models.Model):
     recommended_companions = models.JSONField(default=list, blank=True)
     advisory = models.CharField(max_length=255, blank=True)
     area = models.CharField(max_length=100)
+    province_code = models.CharField(max_length=10, blank=True, db_index=True)
+    municipality_code = models.CharField(max_length=10, blank=True, db_index=True)
+    barangay_code = models.CharField(max_length=10, blank=True)
 
     class Meta:
         ordering = ['name']
@@ -48,6 +52,25 @@ class Destination(models.Model):
 
     def clean(self):
         errors = {}
+        for field in ('name', 'address', 'area'):
+            value = getattr(self, field)
+            if isinstance(value, str):
+                setattr(self, field, value.strip())
+        for field in ('province_code', 'municipality_code', 'barangay_code'):
+            code = getattr(self, field)
+            if code and (not isinstance(code, str) or not re.fullmatch(r'[0-9]{10}', code)):
+                errors[field] = 'Choose a valid 10-digit PSGC code.'
+        if self.barangay_code and not self.municipality_code:
+            errors['barangay_code'] = 'Choose a city or municipality first.'
+        if isinstance(self.name, str) and isinstance(self.address, str) and self.name and self.address:
+            original = Destination.objects.filter(pk=self.pk).values('name', 'address').first() if self.pk else None
+            identity_changed = not original or (
+                original['name'].strip().casefold(), original['address'].strip().casefold()
+            ) != (self.name.casefold(), self.address.casefold())
+            if identity_changed and Destination.objects.filter(
+                name__iexact=self.name, address__iexact=self.address,
+            ).exclude(pk=self.pk).exists():
+                errors['name'] = 'A destination with this name and address already exists.'
         try:
             latitude = Decimal(self.latitude)
             longitude = Decimal(self.longitude)

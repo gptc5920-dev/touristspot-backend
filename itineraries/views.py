@@ -94,6 +94,9 @@ def destination_payload(destination):
         'recommended_companions': destination.recommended_companions,
         'advisory': destination.advisory,
         'area': destination.area,
+        'province_code': destination.province_code,
+        'municipality_code': destination.municipality_code,
+        'barangay_code': destination.barangay_code,
         'is_active': destination.is_active,
         'is_verified': destination.is_verified,
         'review_count': review_count,
@@ -1430,6 +1433,8 @@ def admin_destinations(request):
             is_verified=bool(data.get('is_verified', False)), transportation_options=data.get('transportation_options', []),
             safety_reminders=data.get('safety_reminders', []), recommended_companions=data.get('recommended_companions', []),
             advisory=data.get('advisory', ''), area=data['area'],
+            province_code=data.get('province_code', ''), municipality_code=data.get('municipality_code', ''),
+            barangay_code=data.get('barangay_code', ''),
         )
         destination.full_clean()
         destination.save()
@@ -1467,6 +1472,7 @@ def admin_destination_detail(request, destination_id):
         'closing_time', 'operating_days', 'availability_start', 'availability_end', 'visit_minutes', 'entrance_fee', 'activities', 'accessibility',
         'contact_information', 'image_url', 'is_active', 'is_verified', 'transportation_options',
         'safety_reminders', 'recommended_companions', 'advisory', 'area',
+        'province_code', 'municipality_code', 'barangay_code',
     }
     for field, value in data.items():
         if field in allowed_fields:

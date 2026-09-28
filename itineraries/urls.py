@@ -1,8 +1,11 @@
 from django.urls import path
 
-from . import views
+from . import locations, views
 
 urlpatterns = [
+    path('locations/provinces/', locations.provinces, name='location-provinces'),
+    path('locations/municipalities/', locations.municipalities, name='location-municipalities'),
+    path('locations/barangays/', locations.barangays, name='location-barangays'),
     path('health/', views.health, name='health'),
     path('settings/', views.public_settings, name='public-settings'),
     path('auth/csrf/', views.csrf, name='csrf'),
