@@ -1,3 +1,11 @@
+import os
+import runpy
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+from django.core.files.base import ContentFile
+from django.core.files.storage import StorageHandler
 from django.db import connection
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
@@ -9,6 +17,18 @@ from .views import api_root
 class DatabaseDriverTests(SimpleTestCase):
     def test_mysql_backend_uses_pymysql(self):
         self.assertEqual(connection.Database.__name__, 'pymysql')
+
+
+class ProductionMediaStorageTests(SimpleTestCase):
+    def test_production_configuration_can_store_uploaded_files(self):
+        with patch.dict(os.environ, {'APP_DEBUG': 'false'}):
+            production = runpy.run_path(str(Path(__file__).with_name('settings.py')))
+
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            storage = StorageHandler(backends=production['STORAGES'])['default']
+            name = storage.save('destinations/cover.png', ContentFile(b'cover image'))
+            self.assertEqual((Path(media_root) / name).read_bytes(), b'cover image')
+            self.assertTrue(storage.url(name).endswith('/destinations/cover.png'))
 
 
 class ApiRootTests(SimpleTestCase):
