@@ -108,7 +108,7 @@ python manage.py loaddata sqlite-export.json
 
 Keep both `db.sqlite3` and `sqlite-export.json` private; both are excluded from Git and Docker build contexts.
 
-Destination cover uploads are stored under Django's `MEDIA_ROOT` (`media/` locally) and served at `/media/` in development. Production deployments should map `MEDIA_ROOT` to persistent storage and serve `MEDIA_URL` through the web server or object-storage provider.
+Destination cover uploads are stored under Django's `MEDIA_ROOT` (`media/` locally) and served at `/media/` in development. In production, set `MEDIA_ROOT` to a writable, persistent directory mounted into the API container and serve `MEDIA_URL` through the web server or object-storage provider. If a cover upload returns HTTP 503, check the `destination_image_storage_failure` traceback in the API logs and the mount's write permissions.
 
 For a different frontend origin, set `CSRF_TRUSTED_ORIGINS` to a comma-separated list of full origins (including scheme and port). Development trusts `http://localhost:5173` and `http://127.0.0.1:5173` by default.
 

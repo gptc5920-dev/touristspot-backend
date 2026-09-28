@@ -1508,10 +1508,17 @@ def admin_destination_image(request, destination_id):
     destination.image = upload
     try:
         destination.full_clean()
-        destination.save(update_fields=['image'])
+        with transaction.atomic():
+            destination.save(update_fields=['image'])
     except ValidationError as error:
         destination.image = previous_image
         return validation_error_response(error)
+    except OSError:
+        destination.image = previous_image
+        logger.exception('destination_image_storage_failure destination_id=%s', destination_id)
+        return JsonResponse({
+            'error': 'Cover image storage is unavailable. Ask the server administrator to check that the media directory is writable and persistent.',
+        }, status=503)
     if previous_image and previous_image.name != destination.image.name:
         previous_image.delete(save=False)
     return JsonResponse({'destination': destination_payload(destination)})

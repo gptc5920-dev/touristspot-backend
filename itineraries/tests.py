@@ -578,6 +578,24 @@ class ItineraryApiTests(TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertFalse(response.json()['destination']['has_uploaded_image'])
 
+    def test_destination_upload_returns_json_when_media_storage_is_unavailable(self):
+        User = get_user_model()
+        staff = User.objects.create_user(username='storage-admin', password='secure-pass', is_staff=True)
+        self.client.force_login(staff)
+        destination = Destination.objects.get(name='Test Falls')
+        image = SimpleUploadedFile(
+            'test-cover.png', b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', content_type='image/png',
+        )
+
+        with patch('django.core.files.storage.filesystem.FileSystemStorage._save', side_effect=OSError('read-only media')):
+            with self.assertLogs('itineraries', level='ERROR'):
+                response = self.client.post(f'/api/admin/destinations/{destination.id}/image/', {'image': image})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('storage is unavailable', response.json()['error'])
+        destination.refresh_from_db()
+        self.assertFalse(destination.image)
+
     def test_staff_can_update_settings_and_manage_logo(self):
         User = get_user_model()
         staff = User.objects.create_user(username='settings-admin', password='secure-pass', is_staff=True)

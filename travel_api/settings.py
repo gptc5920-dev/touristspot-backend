@@ -179,7 +179,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 FRONTEND_DIST_DIR = BASE_DIR.parent / 'frontend' / 'dist'
 STATICFILES_DIRS = [FRONTEND_DIST_DIR] if FRONTEND_DIST_DIR.is_dir() else []
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(os.getenv('MEDIA_ROOT', BASE_DIR / 'media'))
 
 # WhiteNoise makes Django assets self-contained for the application container;
 # Nginx serves those files, and user uploads, directly in production.
