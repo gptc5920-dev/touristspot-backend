@@ -16,11 +16,15 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.conf import settings
-from django.conf.urls.static import static
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
+from django.views.static import serve as serve_media
 
 from . import views
+
+
+def public_media(request, path):
+    return serve_media(request, path, document_root=settings.MEDIA_ROOT)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -29,8 +33,12 @@ urlpatterns = [
     path('api/', include('itineraries.urls')),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Only the image paths advertised by the public destination and settings APIs
+# are served. Other files in MEDIA_ROOT have no public route.
+urlpatterns += [re_path(
+    r'^media/(?P<path>(?:destinations/[0-9]{4}/[0-9]{2}/[^/]+\.(?i:jpg|jpeg|png|webp)|branding/[^/]+\.(?i:jpg|jpeg|png|webp)))$',
+    public_media, name='public-media',
+)]
 
 # The Vite frontend uses the browser History API. Serving its index document
 # here keeps deep links such as /planner/ and /admin-dashboard/ working after a

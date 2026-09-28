@@ -30,6 +30,27 @@ class ProductionMediaStorageTests(SimpleTestCase):
             self.assertEqual((Path(media_root) / name).read_bytes(), b'cover image')
             self.assertTrue(storage.url(name).endswith('/destinations/cover.png'))
 
+    @override_settings(DEBUG=False, SECURE_SSL_REDIRECT=False)
+    def test_uploaded_media_is_publicly_served_in_production(self):
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            cover = Path(media_root) / 'destinations' / '2026' / '09' / 'cover.png'
+            cover.parent.mkdir(parents=True)
+            cover.write_bytes(b'cover image')
+            private = Path(media_root) / 'private.txt'
+            private.write_bytes(b'not public')
+            branding = Path(media_root) / 'branding' / 'logo.webp'
+            branding.parent.mkdir()
+            branding.write_bytes(b'public logo')
+            response = self.client.get('/media/destinations/2026/09/cover.png')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b''.join(response.streaming_content), b'cover image')
+            logo_response = self.client.get('/media/branding/logo.webp')
+            self.assertEqual(logo_response.status_code, 200)
+            self.assertEqual(b''.join(logo_response.streaming_content), b'public logo')
+            self.assertEqual(self.client.get('/media/destinations/2026/09/missing.png').status_code, 404)
+            self.assertEqual(self.client.get('/media/private.txt').status_code, 404)
+            self.assertEqual(self.client.get('/media/destinations/2026/09/private.txt').status_code, 404)
+
 
 class ApiRootTests(SimpleTestCase):
     def setUp(self):
