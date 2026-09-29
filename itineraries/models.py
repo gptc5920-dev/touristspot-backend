@@ -56,6 +56,19 @@ class Destination(models.Model):
             value = getattr(self, field)
             if isinstance(value, str):
                 setattr(self, field, value.strip())
+        for field in ('interests', 'operating_days', 'activities', 'transportation_options', 'safety_reminders', 'recommended_companions'):
+            values = getattr(self, field)
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                errors[field] = 'Provide a list of text values.'
+                continue
+            normalized = []
+            seen = set()
+            for value in values:
+                cleaned = value.strip()
+                if cleaned and cleaned.casefold() not in seen:
+                    normalized.append(cleaned)
+                    seen.add(cleaned.casefold())
+            setattr(self, field, normalized)
         for field in ('province_code', 'municipality_code', 'barangay_code'):
             code = getattr(self, field)
             if code and (not isinstance(code, str) or not re.fullmatch(r'[0-9]{10}', code)):
@@ -133,11 +146,13 @@ class SavedItinerary(models.Model):
     travel_date = models.DateField()
     preferences = models.JSONField(default=dict)
     itinerary = models.JSONField(default=dict)
+    signature = models.CharField(max_length=64, null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-updated_at']
+        constraints = [models.UniqueConstraint(fields=['owner', 'signature'], name='unique_owner_itinerary_signature')]
 
     def __str__(self):
         return self.name

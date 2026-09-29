@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -475,7 +476,7 @@ def validate_itinerary_request(data):
     try:
         travel_days = int(data.get('travel_days', 1))
         if travel_days != 1:
-            errors['travel_days'] = ['The configured fallback scheduler currently supports one-day trips only.']
+            errors['travel_days'] = ['Choose a one-day trip.']
     except (TypeError, ValueError):
         errors['travel_days'] = ['Travel days must be a whole number.']
 
@@ -497,14 +498,16 @@ def validate_itinerary_request(data):
         if not isinstance(values, list):
             errors[field] = ['Destination IDs must be provided as a list.']
             continue
-        if len(values) != len(set(values)):
-            errors[field] = ['Duplicate destination IDs are not allowed.']
-            continue
         if not all(isinstance(item, int) and item > 0 for item in values):
             errors[field] = ['Destination IDs must be positive integers.']
+            continue
+        if len(values) != len(set(values)):
+            errors[field] = ['Duplicate destination IDs are not allowed.']
 
     preferred_values = data.get('preferred_destinations') if isinstance(data.get('preferred_destinations'), list) else []
     excluded_values = data.get('excluded_destinations') if isinstance(data.get('excluded_destinations'), list) else []
+    if all(isinstance(item, int) for item in preferred_values + excluded_values) and set(preferred_values) & set(excluded_values):
+        errors['excluded_destinations'] = ['A destination cannot be both preferred and excluded.']
     selected_ids = preferred_values + excluded_values
     if isinstance(selected_ids, list) and selected_ids and all(isinstance(item, int) for item in selected_ids):
         destinations = {item.id: item for item in Destination.objects.filter(id__in=selected_ids)}
@@ -520,8 +523,8 @@ def validate_itinerary_request(data):
 
     try:
         budget = Decimal(str(data.get('budget') or 0))
-        if budget < 0:
-            errors['budget'] = ['Budget cannot be negative.']
+        if not budget.is_finite() or budget < 0 or budget > Decimal('99999999.99'):
+            errors['budget'] = ['Enter a budget from 0 to 99,999,999.99.']
     except (InvalidOperation, TypeError, ValueError):
         errors['budget'] = ['Budget must be a valid amount.']
 
@@ -533,6 +536,8 @@ def validate_itinerary_request(data):
         errors['language'] = ['Select English, Filipino, or Cebuano.']
     if len(str(data.get('accessibility', ''))) > MAX_TEXT_LENGTH:
         errors['accessibility'] = ['Accessibility requirements are too long.']
+    if data.get('companion') not in {'solo', 'couple', 'family', 'friends', 'senior', 'seniors', 'children', None}:
+        errors['companion'] = ['Choose a supported travel group.']
     return errors
 
 
@@ -560,6 +565,7 @@ def build_schedule(data, user=None):
     selected_ids = set(selected_order)
     excluded_ids = set(data.get('excluded_destinations', []))
     needs_accessibility = bool(data.get('accessibility'))
+    has_budget_limit = data.get('budget') not in (None, '')
     budget = Decimal(str(data.get('budget') or 0))
     travelers = int(data.get('travelers') or 1)
     transport = data.get('transportation', 'public')
@@ -587,6 +593,9 @@ def build_schedule(data, user=None):
     pace_factor = PACE_FACTORS.get(pace, 1)
     for recommendation in ranked:
         destination = recommendation.destination
+        group_fee = destination.entrance_fee * travelers
+        if has_budget_limit and destination_cost + group_fee > budget:
+            continue
         transfer = travel_minutes(previous, destination, transport)
         arrival = cursor + timedelta(minutes=transfer)
         open_at = datetime.combine(arrival.date(), destination.opening_time)
@@ -595,7 +604,8 @@ def build_schedule(data, user=None):
             arrival = open_at
         duration = int(destination.visit_minutes * pace_factor)
         departure = arrival + timedelta(minutes=duration)
-        if departure > close_at or departure + timedelta(minutes=35) > end:
+        return_minutes = 50 if transport == 'walking' else 25
+        if departure > close_at or departure + timedelta(minutes=return_minutes) > end:
             continue
         if previous:
             stops.append({
@@ -642,14 +652,14 @@ def build_schedule(data, user=None):
             'recommendation': recommendation.payload(),
         })
         included_ids.add(destination.id)
-        destination_cost += destination.entrance_fee * travelers
+        destination_cost += group_fee
         cursor = departure
         previous = destination
         if len(included_ids) >= (4 if pace == 'fast' else 3 if pace == 'balanced' else 2):
             break
 
     if not stops:
-        return {'error': 'The available travel time is not sufficient for all selected destinations. Remove a destination, extend your travel time, or allow the system to recommend a shorter itinerary.'}
+        return {'error': 'No destination fits the selected hours and entrance-fee budget. Extend your travel time or increase the budget.'}
 
     return_travel = 25 if transport != 'walking' else 50
     return_end = min(cursor + timedelta(minutes=return_travel), end)
@@ -670,8 +680,8 @@ def build_schedule(data, user=None):
     adjustments = []
     if selected_ids - included_ids:
         adjustments.append('Some selected destinations did not fit the available time or operating schedule. Similar verified alternatives are shown below.')
-    if budget and total > budget:
-        adjustments.append('Known entrance fees exceed your selected budget. Transport and meal prices are unavailable and not included.')
+    if has_budget_limit:
+        adjustments.append('Destinations were kept within your entrance-fee budget. Transport and meal prices are unavailable and not included.')
     if needs_accessibility:
         adjustments.append('Accessibility details are highlighted per stop. Please confirm support with the tourism office before traveling.')
 
@@ -1225,18 +1235,28 @@ def saved_itineraries(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     data = read_body(request)
-    if not data or not data.get('itinerary') or not data.get('preferences'):
+    if not isinstance(data, dict) or not isinstance(data.get('itinerary'), dict) or not isinstance(data.get('preferences'), dict):
         return JsonResponse({'error': 'Itinerary and preferences are required.'}, status=400)
-    if not data['preferences'].get('travel_date'):
-        return JsonResponse({'error': 'A travel date is required to save an itinerary.'}, status=400)
-    saved = SavedItinerary.objects.create(
-        name=data.get('name') or data['itinerary'].get('title', 'My itinerary'),
-        owner=request.user,
-        travel_date=data['preferences'].get('travel_date'),
-        preferences=data['preferences'],
-        itinerary=data['itinerary'],
+    errors = validate_itinerary_request(data['preferences'])
+    if errors:
+        return JsonResponse({'error': 'Review the trip details before saving.', 'errors': errors}, status=400)
+    route = data['itinerary'].get('map')
+    if not isinstance(route, list) or not route or not all(isinstance(stop, dict) and isinstance(stop.get('id'), int) for stop in route):
+        return JsonResponse({'error': 'Generate a valid route before saving.'}, status=400)
+    route_ids = [stop['id'] for stop in route]
+    if len(route_ids) != len(set(route_ids)):
+        return JsonResponse({'error': 'The route contains duplicate destinations.'}, status=400)
+    signature_source = {'preferences': data['preferences'], 'route_ids': route_ids}
+    signature = hashlib.sha256(json.dumps(signature_source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    name = str(data.get('name') or data['itinerary'].get('title') or 'My itinerary').strip()[:150]
+    saved, created = SavedItinerary.objects.get_or_create(
+        owner=request.user, signature=signature,
+        defaults={
+            'name': name, 'travel_date': data['preferences']['travel_date'],
+            'preferences': data['preferences'], 'itinerary': data['itinerary'],
+        },
     )
-    return JsonResponse({'id': saved.id, 'message': 'Itinerary saved.'}, status=201)
+    return JsonResponse({'id': saved.id, 'message': 'Itinerary saved.' if created else 'This itinerary is already saved.', 'already_saved': not created}, status=201 if created else 200)
 
 
 @require_GET

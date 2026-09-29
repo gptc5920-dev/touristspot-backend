@@ -1,7 +1,7 @@
 import json
 import re
 import tempfile
-from datetime import time
+from datetime import date, time, timedelta
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
@@ -11,6 +11,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 
 from .models import Destination, DestinationReview, SavedItinerary, SiteSettings, TouristProfile
+from .recommender import HybridRecommendationEngine
+
+
+TRAVEL_THURSDAY = (date.today() + timedelta(days=(3 - date.today().weekday()) % 7 or 7)).isoformat()
 
 
 class ItineraryApiTests(TestCase):
@@ -59,6 +63,16 @@ class ItineraryApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Test Falls', [item['name'] for item in response.json()['destinations']])
 
+    def test_destination_lists_are_normalized_before_save(self):
+        destination = Destination.objects.get(name='Test Falls')
+        destination.interests = [' nature ', 'Nature', 'photography']
+        destination.activities = ['Sightseeing', ' sightseeing ', '']
+        destination.full_clean()
+        destination.save()
+        destination.refresh_from_db()
+        self.assertEqual(destination.interests, ['nature', 'photography'])
+        self.assertEqual(destination.activities, ['Sightseeing'])
+
     def test_public_settings_exposes_default_branding(self):
         response = self.client.get('/api/settings/')
         self.assertEqual(response.status_code, 200)
@@ -67,7 +81,7 @@ class ItineraryApiTests(TestCase):
 
     def test_generates_an_itinerary(self):
         response = self.client.post('/api/itineraries/generate/', data=json.dumps({
-            'travel_date': '2026-08-20', 'starting_location': 'Dalaguete town center',
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Dalaguete town center',
             'start_time': '08:00', 'end_time': '17:00', 'interests': ['nature'],
             'companion': 'couple', 'transportation': 'public', 'pace': 'balanced', 'language': 'English', 'budget': 1000,
         }), content_type='application/json')
@@ -88,12 +102,12 @@ class ItineraryApiTests(TestCase):
             is_verified=True, recommended_companions=['couple'], area='Test Area',
         )
         SavedItinerary.objects.create(
-            name='Similar nature trip', travel_date='2026-08-20',
+            name='Similar nature trip', travel_date=TRAVEL_THURSDAY,
             preferences={'interests': ['nature'], 'companion': 'couple', 'transportation': 'public', 'pace': 'balanced'},
             itinerary={'map': [{'id': popular.id}]},
         )
         response = self.client.post('/api/itineraries/generate/', data=json.dumps({
-            'travel_date': '2026-08-20', 'starting_location': 'Town center',
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
             'start_time': '08:00', 'end_time': '17:00', 'travelers': 1,
             'interests': ['nature'], 'companion': 'couple', 'transportation': 'public',
             'pace': 'balanced', 'language': 'English', 'budget': 1000,
@@ -107,7 +121,7 @@ class ItineraryApiTests(TestCase):
 
     def test_budget_totals_entrance_fees_for_the_whole_group(self):
         response = self.client.post('/api/itineraries/generate/', data=json.dumps({
-            'travel_date': '2026-08-20', 'starting_location': 'Town center',
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
             'start_time': '08:00', 'end_time': '17:00', 'travelers': 2,
             'interests': ['nature'], 'companion': 'couple', 'transportation': 'public',
             'pace': 'balanced', 'language': 'English', 'budget': 1000,
@@ -117,7 +131,7 @@ class ItineraryApiTests(TestCase):
 
     def test_generation_rejects_invalid_schedule_and_unknown_destination(self):
         response = self.client.post('/api/itineraries/generate/', data=json.dumps({
-            'travel_date': '2026-08-20', 'starting_location': 'Town center',
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
             'start_time': '17:00', 'end_time': '08:00', 'travel_days': 1, 'travelers': 1,
             'interests': ['nature'], 'preferred_destinations': [999], 'excluded_destinations': [],
             'budget': 1000, 'transportation': 'public', 'pace': 'balanced', 'language': 'English',
@@ -128,7 +142,7 @@ class ItineraryApiTests(TestCase):
 
     def test_generation_rejects_duplicate_destination_ids(self):
         response = self.client.post('/api/itineraries/generate/', data=json.dumps({
-            'travel_date': '2026-08-20', 'starting_location': 'Town center',
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
             'start_time': '08:00', 'end_time': '17:00', 'travel_days': 1, 'travelers': 1,
             'interests': ['nature'], 'preferred_destinations': [1, 1], 'excluded_destinations': [],
             'budget': 1000, 'transportation': 'public', 'pace': 'balanced', 'language': 'English',
@@ -139,6 +153,57 @@ class ItineraryApiTests(TestCase):
     def test_saved_itineraries_require_sign_in(self):
         response = self.client.get('/api/itineraries/')
         self.assertEqual(response.status_code, 401)
+
+    def test_saving_same_route_twice_does_not_duplicate_history(self):
+        user = get_user_model().objects.create_user(username='saving-tourist', password='secure-pass')
+        self.client.force_login(user)
+        preferences = {
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+            'start_time': '08:00', 'end_time': '17:00', 'travelers': 2,
+            'interests': ['nature'], 'companion': 'couple', 'transportation': 'public',
+            'pace': 'balanced', 'language': 'English', 'budget': 1000,
+        }
+        generated = self.client.post('/api/itineraries/generate/', data=json.dumps(preferences), content_type='application/json')
+        self.assertEqual(generated.status_code, 200)
+        payload = {'preferences': preferences, 'itinerary': generated.json()['itinerary']}
+        first = self.client.post('/api/itineraries/', data=json.dumps(payload), content_type='application/json')
+        second = self.client.post('/api/itineraries/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()['id'], second.json()['id'])
+        self.assertEqual(SavedItinerary.objects.filter(owner=user).count(), 1)
+
+    def test_budget_excludes_unaffordable_stops(self):
+        Destination.objects.create(
+            name='Costly Falls', description='An expensive nature stop.', category='Nature',
+            interests=['nature'], address='Costly road', latitude=9.71, longitude=123.41,
+            opening_time=time(8), closing_time=time(17), operating_days=['Thursday'],
+            visit_minutes=90, entrance_fee=500, is_active=True, is_verified=True, area='Test Area',
+        )
+        response = self.client.post('/api/itineraries/generate/', data=json.dumps({
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+            'start_time': '08:00', 'end_time': '17:00', 'travelers': 2,
+            'interests': ['nature'], 'companion': 'couple', 'transportation': 'public',
+            'pace': 'balanced', 'language': 'English', 'budget': 150,
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        itinerary = response.json()['itinerary']
+        self.assertEqual([stop['title'] for stop in itinerary['map']], ['Test Falls'])
+        self.assertLessEqual(itinerary['budget']['total'], 150)
+
+    def test_own_ratings_influence_future_destination_order(self):
+        favorite = Destination.objects.create(
+            name='Favorite Garden', description='A verified nature stop.', category='Nature',
+            interests=['nature'], address='Garden road', latitude=9.71, longitude=123.41,
+            opening_time=time(8), closing_time=time(17), operating_days=['Thursday'],
+            visit_minutes=90, entrance_fee=50, is_active=True, is_verified=True, area='Test Area',
+        )
+        user = get_user_model().objects.create_user(username='rating-tourist', password='secure-pass')
+        DestinationReview.objects.create(destination=favorite, author=user, rating=5)
+        DestinationReview.objects.create(destination=Destination.objects.get(name='Test Falls'), author=user, rating=1)
+        ranking = HybridRecommendationEngine({'interests': ['nature']}, user=user).rank(list(Destination.objects.all()))
+        self.assertEqual(ranking[0].destination.id, favorite.id)
+        self.assertIn('Based on your previous rating', ranking[0].reasons)
 
     def test_admin_dashboard_requires_staff_role(self):
         User = get_user_model()
@@ -184,7 +249,7 @@ class ItineraryApiTests(TestCase):
             interests=['nature', 'history'], preferred_pace='relaxed',
         )
         SavedItinerary.objects.create(
-            owner=tourist, name='Nature day', travel_date='2026-08-20', preferences={}, itinerary={},
+            owner=tourist, name='Nature day', travel_date=TRAVEL_THURSDAY, preferences={}, itinerary={},
         )
         DestinationReview.objects.create(
             destination=Destination.objects.get(name='Test Falls'), author=tourist,

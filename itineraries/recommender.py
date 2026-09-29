@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
-from .models import SavedItinerary
+from .models import DestinationReview, SavedItinerary
 
 
 MAX_HISTORY_SAMPLES = 500
@@ -127,6 +127,7 @@ class HybridRecommendationEngine:
         self.latitude = preferences.get('latitude')
         self.longitude = preferences.get('longitude')
         self.collaborative_scores, self.history_samples = self._collaborative_scores()
+        self.personal_ratings = dict(DestinationReview.objects.filter(author=self.user).values_list('destination_id', 'rating')) if self.user else {}
         self.collaborative_enabled = False
 
     def _history_similarity(self, saved):
@@ -284,6 +285,11 @@ class HybridRecommendationEngine:
             else:
                 score = content_score * 0.65 + context_score * 0.35
             reasons = []
+            personal_rating = self.personal_ratings.get(destination.id)
+            if personal_rating is not None:
+                score += (personal_rating - 3) * 0.10
+                if personal_rating >= 4:
+                    reasons.append('Based on your previous rating')
             if destination.id in self.selected_ids:
                 score += 0.30
                 reasons.append('One of your selected places')
@@ -296,7 +302,7 @@ class HybridRecommendationEngine:
                 reasons.append('Balanced fit for your trip settings')
             ranked.append(RankedDestination(
                 destination=destination,
-                score=min(score, 1),
+            score=max(0, min(score, 1)),
                 content_score=content_score,
                 collaborative_score=collaborative_score,
                 context_score=context_score,
@@ -304,8 +310,8 @@ class HybridRecommendationEngine:
             ))
         selected_position = {destination_id: index for index, destination_id in enumerate(self.selected_order)}
         ranked.sort(key=lambda item: (
-            -item.score,
             selected_position.get(item.destination.id, 999),
+            -item.score,
             item.destination.name.casefold(),
         ))
         return ranked
