@@ -110,6 +110,23 @@ Keep both `db.sqlite3` and `sqlite-export.json` private; both are excluded from 
 
 Destination cover uploads are stored under Django's `MEDIA_ROOT` (`media/` locally) and served at `/media/` in development. In production, set `MEDIA_ROOT` to a writable, persistent directory mounted into the API container and serve `MEDIA_URL` through the web server or object-storage provider. If a cover upload returns HTTP 503, check the `destination_image_storage_failure` traceback in the API logs and the mount's write permissions.
 
+### Nixpacks uploaded photos and logos
+
+Git pulls and application rebuilds update source files. Uploaded photos are separate data; a database filename does not contain the image itself. Nixpacks does not provision a persistent media volume from `nixpacks.toml`.
+
+For the backend app in Hostinger's deployment manager:
+
+1. Attach a persistent volume with a container destination of `/data/media`. If the hosting product has no volume support, use a deployment with persistent disk or configure an external storage backend; creating an ordinary container directory is insufficient.
+2. Set the backend environment variable `MEDIA_ROOT=/data/media`. Keep the public URL prefix `/media/`; Django serves destination photos and logos even when debug mode is disabled.
+3. Before restarting or redeploying, copy existing uploads from the old media directory or a backup into the volume, preserving relative paths (`destinations/YYYY/MM/filename.jpg` and `branding/filename.png`). The empty volume does not restore missing files.
+4. Redeploy the backend. Its startup now checks that the media directory can be read and written before starting Gunicorn.
+5. Run `python manage.py check_media_storage --check-files` in the backend container. It reports database references whose files are missing. Restore those exact paths from backup or re-upload the affected images in the admin workspace.
+6. Upload a cover, open its URL on the API domain, then restart/redeploy and open the same URL again. Both requests must return an image, not the frontend HTML page.
+
+For separate frontend and backend services, build the frontend with `VITE_API_URL=https://api.touristspot.site/api`. `/media/` links must resolve against the API domain. Itinerary stops, map entries, and personalized recommendations use the same uploaded covers as destination listings.
+
+Back up the media volume alongside MySQL. A database-only backup preserves filenames but cannot restore photo contents.
+
 For a different frontend origin, set `CSRF_TRUSTED_ORIGINS` to a comma-separated list of full origins (including scheme and port). Development trusts `http://localhost:5173` and `http://127.0.0.1:5173` by default.
 
 Password reset links use `FRONTEND_URL` and expire after `PASSWORD_RESET_TIMEOUT` seconds (one hour by default). Development prints reset emails in the Django terminal. For production, configure the SMTP `EMAIL_*` values shown in `.env.example` and use `django.core.mail.backends.smtp.EmailBackend`. Checked “Remember me” sessions last `REMEMBER_ME_SECONDS` seconds (14 days by default); unchecked sessions expire when the browser closes.

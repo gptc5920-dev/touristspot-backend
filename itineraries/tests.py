@@ -1,12 +1,14 @@
 import json
 import re
 import tempfile
+from io import StringIO
 from datetime import date, time, timedelta
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.management import call_command, CommandError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 
@@ -661,9 +663,52 @@ class ItineraryApiTests(TestCase):
             self.assertTrue(response.json()['destination']['has_uploaded_image'])
             self.assertTrue(response.json()['destination']['image_url'].startswith('/media/destinations/'))
 
+            destination.refresh_from_db()
+            self.assertTrue(destination.image.storage.exists(destination.image.name))
+            photo_url = response.json()['destination']['image_url']
+            photo_response = self.client.get(photo_url)
+            self.assertEqual(photo_response.status_code, 200)
+            self.assertEqual(b''.join(photo_response.streaming_content), b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR')
+            self.assertEqual(self.client.get('/api/destinations/').json()['destinations'][0]['image_url'], photo_url)
+
+            itinerary_response = self.client.post('/api/itineraries/generate/', data=json.dumps({
+                'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+                'start_time': '08:00', 'end_time': '17:00', 'interests': ['nature'],
+                'companion': 'couple', 'transportation': 'public', 'pace': 'balanced', 'language': 'English', 'budget': 1000,
+            }), content_type='application/json')
+            self.assertEqual(itinerary_response.status_code, 200, itinerary_response.content)
+            itinerary = itinerary_response.json()['itinerary']
+            self.assertEqual(next(stop for stop in itinerary['stops'] if stop['type'] == 'destination')['image_url'], photo_url)
+            self.assertEqual(itinerary['map'][0]['image_url'], photo_url)
+
             response = self.client.delete(f'/api/admin/destinations/{destination.id}/image/')
             self.assertEqual(response.status_code, 200)
             self.assertFalse(response.json()['destination']['has_uploaded_image'])
+
+    def test_media_audit_reports_missing_uploads(self):
+        destination = Destination.objects.get(name='Test Falls')
+        destination.image = 'destinations/2026/09/missing.png'
+        destination.save(update_fields=['image'])
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            with self.assertRaisesMessage(CommandError, 'destinations/2026/09/missing.png'):
+                call_command('check_media_storage', check_files=True, stdout=StringIO())
+
+    def test_logo_upload_returns_json_when_media_storage_is_unavailable(self):
+        staff = get_user_model().objects.create_user(username='logo-storage-admin', password='secure-pass', is_staff=True)
+        self.client.force_login(staff)
+        settings_record = SiteSettings.load()
+        settings_record.logo = 'branding/existing.png'
+        settings_record.save()
+        logo = SimpleUploadedFile(
+            'logo.png', b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', content_type='image/png',
+        )
+        with patch('django.core.files.storage.filesystem.FileSystemStorage._save', side_effect=OSError('read-only media')):
+            with self.assertLogs('itineraries', level='ERROR'):
+                response = self.client.post('/api/admin/settings/logo/', {'logo': logo})
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('storage is unavailable', response.json()['error'])
+        settings_record.refresh_from_db()
+        self.assertEqual(settings_record.logo.name, 'branding/existing.png')
 
     def test_destination_upload_returns_json_when_media_storage_is_unavailable(self):
         User = get_user_model()

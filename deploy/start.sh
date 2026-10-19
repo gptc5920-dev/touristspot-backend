@@ -12,6 +12,8 @@ case "$port" in
     ;;
 esac
 
+python manage.py check_media_storage
+
 attempt=1
 until python manage.py migrate --noinput; do
   if [ "$attempt" -ge "$max_attempts" ]; then

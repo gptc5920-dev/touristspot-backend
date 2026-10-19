@@ -59,6 +59,10 @@ def destination_available_on(destination, travel_date):
     )
 
 
+def destination_image_url(destination):
+    return destination.image.url if destination.image else destination.image_url
+
+
 def destination_payload(destination):
     uploaded_image_url = destination.image.url if destination.image else ''
     if hasattr(destination, 'review_count'):
@@ -641,7 +645,7 @@ def build_schedule(data, user=None):
             'duration_minutes': duration,
             'description': destination.description,
             'address': destination.address,
-            'image_url': destination.image_url,
+            'image_url': destination_image_url(destination),
             'activities': destination.activities,
             'accessibility': destination.accessibility or 'Accessibility details currently unavailable.',
             'estimated_cost': float(destination.entrance_fee),
@@ -1412,7 +1416,8 @@ def admin_settings_logo(request):
     settings_record.logo = upload
     try:
         settings_record.full_clean()
-        settings_record.save(update_fields=['logo', 'updated_at'])
+        with transaction.atomic():
+            settings_record.save(update_fields=['logo', 'updated_at'])
     except ValidationError as error:
         settings_record.logo = previous_logo
         messages = getattr(error, 'message_dict', {'detail': error.messages})
@@ -1420,6 +1425,12 @@ def admin_settings_logo(request):
             'error': 'Review the uploaded logo.',
             'fields': {field: [str(message) for message in values] for field, values in messages.items()},
         }, status=400)
+    except OSError:
+        settings_record.logo = previous_logo
+        logger.exception('site_logo_storage_failure')
+        return JsonResponse({
+            'error': 'Logo storage is unavailable. Ask the server administrator to check that the media directory is writable and persistent.',
+        }, status=503)
     if previous_logo and previous_logo.name != settings_record.logo.name:
         previous_logo.delete(save=False)
     return JsonResponse({'settings': site_settings_payload(settings_record)})

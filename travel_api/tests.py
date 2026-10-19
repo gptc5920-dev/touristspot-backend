@@ -1,11 +1,13 @@
 import os
 import runpy
 import tempfile
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import StorageHandler
+from django.core.management import call_command, CommandError
 from django.db import connection
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
@@ -20,6 +22,19 @@ class DatabaseDriverTests(SimpleTestCase):
 
 
 class ProductionMediaStorageTests(SimpleTestCase):
+    def test_startup_creates_and_checks_configured_media_directory(self):
+        with tempfile.TemporaryDirectory() as parent, self.settings(MEDIA_ROOT=Path(parent) / 'media'):
+            output = StringIO()
+            call_command('check_media_storage', stdout=output)
+            self.assertIn('readable and writable', output.getvalue())
+            self.assertEqual(list((Path(parent) / 'media').iterdir()), [])
+
+    def test_startup_rejects_an_unwritable_media_directory(self):
+        with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
+            with patch('tempfile.TemporaryFile', side_effect=PermissionError('read-only media')):
+                with self.assertRaisesMessage(CommandError, 'MEDIA_ROOT is not readable and writable'):
+                    call_command('check_media_storage', stdout=StringIO())
+
     def test_production_configuration_can_store_uploaded_files(self):
         with patch.dict(os.environ, {'APP_DEBUG': 'false'}):
             production = runpy.run_path(str(Path(__file__).with_name('settings.py')))
