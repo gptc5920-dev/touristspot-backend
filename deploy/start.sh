@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Nixpacks app files are replaceable. Keep small uploads in persistent MySQL.
+export MEDIA_STORAGE="${MEDIA_STORAGE:-database}"
+
 port="${PORT:-8000}"
 max_attempts="${DATABASE_STARTUP_MAX_ATTEMPTS:-10}"
 retry_seconds="${DATABASE_STARTUP_RETRY_SECONDS:-3}"
@@ -11,8 +14,6 @@ case "$port" in
     exit 1
     ;;
 esac
-
-python manage.py check_media_storage
 
 attempt=1
 until python manage.py migrate --noinput; do
@@ -26,6 +27,8 @@ until python manage.py migrate --noinput; do
   sleep "$retry_seconds"
 done
 
+python manage.py check_media_storage
+python manage.py import_media
 python manage.py collectstatic --noinput --clear
 
 exec gunicorn travel_api.wsgi:application \

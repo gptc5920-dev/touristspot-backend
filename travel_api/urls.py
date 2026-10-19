@@ -18,13 +18,18 @@ from django.contrib import admin
 from django.conf import settings
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
-from django.views.static import serve as serve_media
+from django.core.files.storage import default_storage
+from django.http import FileResponse, Http404
 
 from . import views
 
 
 def public_media(request, path):
-    return serve_media(request, path, document_root=settings.MEDIA_ROOT)
+    try:
+        image = default_storage.open(path, 'rb')
+    except FileNotFoundError as error:
+        raise Http404('Image not found.') from error
+    return FileResponse(image, filename=path.rsplit('/', 1)[-1])
 
 urlpatterns = [
     path('admin/', admin.site.urls),

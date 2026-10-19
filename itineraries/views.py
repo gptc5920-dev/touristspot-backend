@@ -1429,10 +1429,10 @@ def admin_settings_logo(request):
         settings_record.logo = previous_logo
         logger.exception('site_logo_storage_failure')
         return JsonResponse({
-            'error': 'Logo storage is unavailable. Ask the server administrator to check that the media directory is writable and persistent.',
+            'error': 'Logo storage is unavailable. Ask the server administrator to check the configured media storage and API logs.',
         }, status=503)
     if previous_logo and previous_logo.name != settings_record.logo.name:
-        previous_logo.delete(save=False)
+        previous_logo.storage.delete(previous_logo.name)
     return JsonResponse({'settings': site_settings_payload(settings_record)})
 
 
@@ -1554,8 +1554,8 @@ def admin_destination_image(request, destination_id):
         destination.image = previous_image
         logger.exception('destination_image_storage_failure destination_id=%s', destination_id)
         return JsonResponse({
-            'error': 'Cover image storage is unavailable. Ask the server administrator to check that the media directory is writable and persistent.',
+            'error': 'Cover image storage is unavailable. Ask the server administrator to check the configured media storage and API logs.',
         }, status=503)
     if previous_image and previous_image.name != destination.image.name:
-        previous_image.delete(save=False)
+        previous_image.storage.delete(previous_image.name)
     return JsonResponse({'destination': destination_payload(destination)})

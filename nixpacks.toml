@@ -2,6 +2,7 @@ providers = ["python"]
 
 [variables]
 PORT = "8000"
+MEDIA_STORAGE = "database"
 
 [phases.setup]
 # The application uses the pure-Python PyMySQL driver, so the image only needs

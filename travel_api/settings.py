@@ -180,18 +180,26 @@ FRONTEND_DIST_DIR = BASE_DIR.parent / 'frontend' / 'dist'
 STATICFILES_DIRS = [FRONTEND_DIST_DIR] if FRONTEND_DIST_DIR.is_dir() else []
 MEDIA_URL = '/media/'
 MEDIA_ROOT = Path(os.getenv('MEDIA_ROOT', BASE_DIR / 'media'))
+MEDIA_STORAGE = os.getenv('MEDIA_STORAGE', 'filesystem').lower()
+if MEDIA_STORAGE not in {'filesystem', 'database'}:
+    raise ImproperlyConfigured('MEDIA_STORAGE must be filesystem or database.')
 
-# WhiteNoise makes Django assets self-contained for the application container;
-# Nginx serves those files, and user uploads, directly in production.
-if not DEBUG:
-    STORAGES = {
-        'default': {
-            'BACKEND': 'django.core.files.storage.FileSystemStorage',
-        },
-        'staticfiles': {
-            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
-        },
-    }
+# Static assets and uploaded media use separate storage backends. Media is
+# served through public_media, including deployments without persistent disk.
+STORAGES = {
+    'default': {
+        'BACKEND': (
+            'itineraries.storage.DatabaseMediaStorage' if MEDIA_STORAGE == 'database'
+            else 'django.core.files.storage.FileSystemStorage'
+        ),
+    },
+    'staticfiles': {
+        'BACKEND': (
+            'django.contrib.staticfiles.storage.StaticFilesStorage' if DEBUG
+            else 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        ),
+    },
+}
 
 # Authentication and transactional email
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')

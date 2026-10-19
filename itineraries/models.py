@@ -8,6 +8,15 @@ from datetime import time
 import re
 
 
+class StoredMedia(models.Model):
+    """Small public images retained alongside the application's persistent data."""
+
+    name = models.CharField(max_length=255, unique=True)
+    content = models.BinaryField()
+    size = models.PositiveIntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class Destination(models.Model):
     """Tourism-office verified information used by the itinerary engine."""
 

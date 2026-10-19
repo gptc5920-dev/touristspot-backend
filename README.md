@@ -108,24 +108,25 @@ python manage.py loaddata sqlite-export.json
 
 Keep both `db.sqlite3` and `sqlite-export.json` private; both are excluded from Git and Docker build contexts.
 
-Destination cover uploads are stored under Django's `MEDIA_ROOT` (`media/` locally) and served at `/media/` in development. In production, set `MEDIA_ROOT` to a writable, persistent directory mounted into the API container and serve `MEDIA_URL` through the web server or object-storage provider. If a cover upload returns HTTP 503, check the `destination_image_storage_failure` traceback in the API logs and the mount's write permissions.
+Destination covers and logos use Django's configured default storage and public `/media/` URLs. Local development defaults to filesystem storage under `MEDIA_ROOT` (`media/`). Docker installations can keep `MEDIA_STORAGE=filesystem` with a persistent media volume.
 
 ### Nixpacks uploaded photos and logos
 
-Git pulls and application rebuilds update source files. Uploaded photos are separate data; a database filename does not contain the image itself. Nixpacks does not provision a persistent media volume from `nixpacks.toml`.
+The Nixpacks configuration and `deploy/start.sh` default to `MEDIA_STORAGE=database`. Photo contents are saved in the existing MySQL database, so they survive application container rebuilds without a persistent filesystem mount. Django serves them from the same public `/media/` URLs even with debug mode disabled. No external storage credentials are needed.
 
-For the backend app in Hostinger's deployment manager:
+Startup applies the `StoredMedia` migration, checks database media reads/writes, and runs `python manage.py import_media` before starting Gunicorn. The import copies locally available, referenced originals into the database without changing their URLs. It never replaces an image already stored in the database. The recovery manifest in `deploy/media-recovery.json` restores the two confirmed missing `Luoip.jpg` references from the original already tracked in this repository; its SHA-256 must match before import.
 
-1. Attach a persistent volume with a container destination of `/data/media`. If the hosting product has no volume support, use a deployment with persistent disk or configure an external storage backend; creating an ordinary container directory is insufficient.
-2. Set the backend environment variable `MEDIA_ROOT=/data/media`. Keep the public URL prefix `/media/`; Django serves destination photos and logos even when debug mode is disabled.
-3. Before restarting or redeploying, copy existing uploads from the old media directory or a backup into the volume, preserving relative paths (`destinations/YYYY/MM/filename.jpg` and `branding/filename.png`). The empty volume does not restore missing files.
-4. Redeploy the backend. Its startup now checks that the media directory can be read and written before starting Gunicorn.
-5. Run `python manage.py check_media_storage --check-files` in the backend container. It reports database references whose files are missing. Restore those exact paths from backup or re-upload the affected images in the admin workspace.
-6. Upload a cover, open its URL on the API domain, then restart/redeploy and open the same URL again. Both requests must return an image, not the frontend HTML page.
+After redeployment:
 
-For separate frontend and backend services, build the frontend with `VITE_API_URL=https://api.touristspot.site/api`. `/media/` links must resolve against the API domain. Itinerary stops, map entries, and personalized recommendations use the same uploaded covers as destination listings.
+1. Open the affected cover and logo URLs on the API domain and confirm they return images.
+2. Run `python manage.py check_media_storage --check-files` in the API container to identify any other missing originals. An empty image field means no photo has been assigned; upload it from the admin workspace.
+3. Upload a new cover, restart/redeploy the backend, and open the same image URL again to verify persistence.
 
-Back up the media volume alongside MySQL. A database-only backup preserves filenames but cannot restore photo contents.
+Database image storage is intended for this small cover/logo collection, with the existing 5 MB cover and 2 MB logo limits. Include the `StoredMedia` table in MySQL backups. Images increase database size and backup time; use object storage for a large image library. MySQL must allow packets large enough for the supported uploads.
+
+For a deployment with persistent disk, explicitly set `MEDIA_STORAGE=filesystem` and `MEDIA_ROOT` to the mounted directory. If Nginx fronts database storage, proxy `/media/` to Django instead of using a filesystem alias.
+
+For separate frontend and backend services, build the frontend with `VITE_API_URL=https://api.touristspot.site/api`. Itinerary stops, map entries, and recommendations resolve uploaded photo URLs against that API domain.
 
 For a different frontend origin, set `CSRF_TRUSTED_ORIGINS` to a comma-separated list of full origins (including scheme and port). Development trusts `http://localhost:5173` and `http://127.0.0.1:5173` by default.
 
