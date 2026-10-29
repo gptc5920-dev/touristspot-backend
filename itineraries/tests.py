@@ -152,6 +152,66 @@ class ItineraryApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('preferred_destinations', response.json()['errors'])
 
+    def test_generation_explains_preferred_destination_availability(self):
+        destination = Destination.objects.get(name='Test Falls')
+        travel_date = date.fromisoformat(TRAVEL_THURSDAY)
+        payload = {
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+            'start_time': '08:00', 'end_time': '17:00', 'interests': ['nature'],
+            'preferred_destinations': [destination.id], 'transportation': 'public',
+            'pace': 'balanced', 'language': 'English',
+        }
+        cases = [
+            (travel_date + timedelta(days=1), None, ['Thursday'], 'Available from'),
+            (None, travel_date - timedelta(days=1), ['Thursday'], 'Availability ended on'),
+            (None, None, ['Friday'], 'Closed on Thursday. Open on Friday.'),
+        ]
+        for start, end, days, explanation in cases:
+            with self.subTest(explanation=explanation):
+                destination.availability_start = start
+                destination.availability_end = end
+                destination.operating_days = days
+                destination.save()
+                response = self.client.post('/api/itineraries/generate/', data=json.dumps(payload), content_type='application/json')
+                self.assertEqual(response.status_code, 400)
+                error = response.json()['errors']['preferred_destinations'][0]
+                self.assertIn('Test Falls:', error)
+                self.assertIn(explanation, error)
+                self.assertIn('Change your travel date or deselect this place.', error)
+
+    def test_generation_allows_inclusive_availability_dates(self):
+        destination = Destination.objects.get(name='Test Falls')
+        destination.availability_start = date.fromisoformat(TRAVEL_THURSDAY)
+        destination.availability_end = date.fromisoformat(TRAVEL_THURSDAY)
+        destination.save()
+        response = self.client.post('/api/itineraries/generate/', data=json.dumps({
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+            'start_time': '08:00', 'end_time': '17:00', 'interests': ['nature'],
+            'preferred_destinations': [destination.id], 'transportation': 'public',
+            'pace': 'balanced', 'language': 'English',
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['itinerary']['map'][0]['id'], destination.id)
+
+    def test_generation_skips_unavailable_places_after_deselection(self):
+        unavailable = Destination.objects.get(name='Test Falls')
+        unavailable.availability_end = date.fromisoformat(TRAVEL_THURSDAY) - timedelta(days=1)
+        unavailable.save()
+        available = Destination.objects.create(
+            name='Open Garden', description='An available nature stop.', category='Nature',
+            interests=['nature'], address='Garden road', latitude=9.71, longitude=123.41,
+            opening_time=time(8), closing_time=time(17), operating_days=['Thursday'],
+            visit_minutes=60, entrance_fee=0, is_active=True, is_verified=True, area='Test Area',
+        )
+        response = self.client.post('/api/itineraries/generate/', data=json.dumps({
+            'travel_date': TRAVEL_THURSDAY, 'starting_location': 'Town center',
+            'start_time': '08:00', 'end_time': '17:00', 'interests': ['nature'],
+            'preferred_destinations': [], 'transportation': 'public',
+            'pace': 'balanced', 'language': 'English',
+        }), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([stop['id'] for stop in response.json()['itinerary']['map']], [available.id])
+
     def test_saved_itineraries_require_sign_in(self):
         response = self.client.get('/api/itineraries/')
         self.assertEqual(response.status_code, 401)

@@ -59,6 +59,21 @@ def destination_available_on(destination, travel_date):
     )
 
 
+def destination_unavailability_reason(destination, travel_date):
+    if not destination.is_active or not destination.is_verified:
+        return 'This place is not currently active and verified.'
+    if destination.availability_start and travel_date < destination.availability_start:
+        return f'Available from {destination.availability_start.isoformat()}.'
+    if destination.availability_end and travel_date > destination.availability_end:
+        return f'Availability ended on {destination.availability_end.isoformat()}.'
+    day = travel_date.strftime('%A')
+    if day not in destination.operating_days:
+        if not destination.operating_days:
+            return 'Operating days are not listed.'
+        return f"Closed on {day}. Open on {', '.join(destination.operating_days)}."
+    return ''
+
+
 def destination_image_url(destination):
     return destination.image.url if destination.image else destination.image_url
 
@@ -518,12 +533,15 @@ def validate_itinerary_request(data):
         unknown = set(selected_ids).difference(destinations)
         if unknown:
             errors['preferred_destinations'] = ['One or more selected destinations do not exist.']
-        unavailable = [item for item in data.get('preferred_destinations', []) if item in destinations and (not destinations[item].is_active or not destinations[item].is_verified)]
-        if unavailable:
-            errors['preferred_destinations'] = ['Selected destinations must be active and verified.']
-        seasonally_unavailable = [item for item in data.get('preferred_destinations', []) if item in destinations and parsed_date and not destination_available_on(destinations[item], parsed_date)]
-        if seasonally_unavailable:
-            errors['preferred_destinations'] = ['One or more selected destinations are unavailable on the chosen travel date.']
+        for destination_id in preferred_values:
+            destination = destinations.get(destination_id)
+            if destination is None or parsed_date is None:
+                continue
+            reason = destination_unavailability_reason(destination, parsed_date)
+            if reason:
+                errors.setdefault('preferred_destinations', []).append(
+                    f'{destination.name}: {reason} Change your travel date or deselect this place.'
+                )
 
     try:
         budget = Decimal(str(data.get('budget') or 0))
@@ -577,11 +595,10 @@ def build_schedule(data, user=None):
     start = parse_clock(data.get('start_time'), '08:00')
     end = parse_clock(data.get('end_time'), '17:00')
     trip_date = date.fromisoformat(data['travel_date'])
-    trip_day = trip_date.strftime('%A')
     available = [
         item for item in Destination.objects.filter(is_active=True, is_verified=True)
         .exclude(id__in=excluded_ids).annotate(average_rating=Avg('reviews__rating'), review_count=Count('reviews'))
-        if trip_day in item.operating_days and destination_available_on(item, trip_date)
+        if not destination_unavailability_reason(item, trip_date)
     ]
     recommender = HybridRecommendationEngine(data, user=user)
     ranked = recommender.rank(available)
